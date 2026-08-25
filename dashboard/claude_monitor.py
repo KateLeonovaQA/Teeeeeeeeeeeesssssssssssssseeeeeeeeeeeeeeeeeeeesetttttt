@@ -10,17 +10,17 @@ Serves on port 9010 and provides:
 - /api/prompts - Recent user prompts
 """
 
+import glob
 import json
 import os
-import glob
-import time
 import threading
+import time
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from phantom.utils.pricing import get_pricing
+from utils.cost import compute_cost
 
 # Configuration
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -40,7 +40,9 @@ class SessionData:
         self.tool_uses = {}  # name -> count
         self.messages = 0
         self.prompts = []  # [{timestamp, content}]
-        self.timeline = []  # [{timestamp, input_tokens, output_tokens, cache_read_tokens}]
+        self.timeline = (
+            []
+        )  # [{timestamp, input_tokens, output_tokens, cache_read_tokens}]
         self.session_id = ""
         self.model = ""
         self.start_time = None
@@ -102,14 +104,16 @@ def parse_jsonl_file(filepath: str) -> SessionData:
 
                     # Timeline entry
                     if timestamp and (inp or out or cr):
-                        data.timeline.append({
-                            "timestamp": timestamp,
-                            "input_tokens": inp,
-                            "output_tokens": out,
-                            "cache_read_tokens": cr,
-                            "cache_write_5m_tokens": cw_5m,
-                            "cache_write_1h_tokens": cw_1h,
-                        })
+                        data.timeline.append(
+                            {
+                                "timestamp": timestamp,
+                                "input_tokens": inp,
+                                "output_tokens": out,
+                                "cache_read_tokens": cr,
+                                "cache_write_5m_tokens": cw_5m,
+                                "cache_write_1h_tokens": cw_1h,
+                            }
+                        )
 
                 # Extract model (inside message object)
                 if msg.get("model") and not data.model:
@@ -127,12 +131,14 @@ def parse_jsonl_file(filepath: str) -> SessionData:
                 if entry_type == "user":
                     user_content = msg.get("content", "")
                     if isinstance(user_content, str) and user_content.strip():
-                        data.prompts.append({
-                            "timestamp": timestamp,
-                            "content": user_content[:2000],
-                            "response": "",
-                            "uuid": entry.get("uuid", ""),
-                        })
+                        data.prompts.append(
+                            {
+                                "timestamp": timestamp,
+                                "content": user_content[:2000],
+                                "response": "",
+                                "uuid": entry.get("uuid", ""),
+                            }
+                        )
                     elif isinstance(user_content, list):
                         # Tool results - skip these as prompts
                         pass
@@ -190,31 +196,32 @@ class StatsCache:
         for f in files:
             sd = parse_jsonl_file(f)
 
-            # Calculate per-session cost using the session's model pricing
-            pricing = get_pricing(sd.model)
-            session_cost = (
-                (sd.input_tokens / 1_000_000) * pricing["input"]
-                + (sd.output_tokens / 1_000_000) * pricing["output"]
-                + (sd.cache_write_5m_tokens / 1_000_000) * pricing["cache_write_5m"]
-                + (sd.cache_write_1h_tokens / 1_000_000) * pricing["cache_write_1h"]
-                + (sd.cache_read_tokens / 1_000_000) * pricing["cache_read"]
+            session_cost = compute_cost(
+                sd.model,
+                sd.input_tokens,
+                sd.output_tokens,
+                sd.cache_write_5m_tokens,
+                sd.cache_write_1h_tokens,
+                sd.cache_read_tokens,
             )
             total_cost += session_cost
 
-            sessions.append({
-                "session_id": sd.session_id,
-                "messages": sd.messages,
-                "input_tokens": sd.input_tokens,
-                "output_tokens": sd.output_tokens,
-                "cache_write_5m_tokens": sd.cache_write_5m_tokens,
-                "cache_write_1h_tokens": sd.cache_write_1h_tokens,
-                "cache_read_tokens": sd.cache_read_tokens,
-                "tool_uses": sum(sd.tool_uses.values()),
-                "start_time": sd.start_time,
-                "last_time": sd.last_time,
-                "model": sd.model,
-                "cost": round(session_cost, 4),
-            })
+            sessions.append(
+                {
+                    "session_id": sd.session_id,
+                    "messages": sd.messages,
+                    "input_tokens": sd.input_tokens,
+                    "output_tokens": sd.output_tokens,
+                    "cache_write_5m_tokens": sd.cache_write_5m_tokens,
+                    "cache_write_1h_tokens": sd.cache_write_1h_tokens,
+                    "cache_read_tokens": sd.cache_read_tokens,
+                    "tool_uses": sum(sd.tool_uses.values()),
+                    "start_time": sd.start_time,
+                    "last_time": sd.last_time,
+                    "model": sd.model,
+                    "cost": round(session_cost, 4),
+                }
+            )
 
             total.input_tokens += sd.input_tokens
             total.output_tokens += sd.output_tokens
@@ -249,7 +256,8 @@ class StatsCache:
             "stats": {
                 "total_input_tokens": total.input_tokens,
                 "total_output_tokens": total.output_tokens,
-                "total_cache_write_tokens": total.cache_write_5m_tokens + total.cache_write_1h_tokens,
+                "total_cache_write_tokens": total.cache_write_5m_tokens
+                + total.cache_write_1h_tokens,
                 "total_cache_write_5m_tokens": total.cache_write_5m_tokens,
                 "total_cache_write_1h_tokens": total.cache_write_1h_tokens,
                 "total_cache_read_tokens": total.cache_read_tokens,

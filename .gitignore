@@ -1,15 +1,26 @@
 # Runtime state files (not tracked)
 .orchestrator.lock
+.cycle_count
 .browser_server.pid
 .session_alert
+monitor_step_count.json
+cycle_state.json
+cycle_issue_permit
+.upgrade/
 
 # Sensitive files
 settings.json
+codex_settings.json
 .env*
+services/whatsapp/memory/
 
 # Browser data
-phantom/browser_data/
-phantom/sessions/_tmp_cookies.db
+**/browser_data/
+**/sessions/_tmp_cookies.db
+# Volatile browsr runtime files
+**/Singleton*
+browser/**/*-wal
+browser/**/*-shm
 
 # Python
 __pycache__/
@@ -17,6 +28,17 @@ __pycache__/
 
 # Logs
 *.log
+**/logs/
 
 # OS
 .DS_Store
+
+# ignore the system prompt files created for agent from MD
+system_prompt.txt
+system_prompt_*.txt
+
+# ignore the codex skills
+.codex/*
+
+# Machine-local / runtime state
+.config

@@ -19,15 +19,15 @@ Python API:
 """
 
 import json
-import sys
 import os
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-from phantom.utils.pricing import get_pricing
+from utils.cost import compute_cost_breakdown
 
 
 def analyze_log(filepath: str) -> dict:
@@ -88,7 +88,9 @@ def analyze_log(filepath: str) -> dict:
                 if usage:
                     inp = usage.get("input_tokens", 0)
                     out = usage.get("output_tokens", 0)
-                    cr = usage.get("cache_read_input_tokens", usage.get("cache_read", 0))
+                    cr = usage.get(
+                        "cache_read_input_tokens", usage.get("cache_read", 0)
+                    )
 
                     # Break down cache writes into 5m and 1h tiers
                     cache_creation = usage.get("cache_creation", {})
@@ -96,7 +98,9 @@ def analyze_log(filepath: str) -> dict:
                     cw_1h = cache_creation.get("ephemeral_1h_input_tokens", 0)
                     # Fallback: if no breakdown, attribute all to 5m
                     if not cw_5m and not cw_1h:
-                        cw_5m = usage.get("cache_creation_input_tokens", usage.get("cache_write", 0))
+                        cw_5m = usage.get(
+                            "cache_creation_input_tokens", usage.get("cache_write", 0)
+                        )
 
                     usage_key = (inp, out, cr, cw_5m, cw_1h)
 
@@ -111,32 +115,42 @@ def analyze_log(filepath: str) -> dict:
 
                 # Extract errors
                 entry_type = entry.get("type", "")
-                if entry_type == "error" or "error" in str(entry.get("message", "")).lower():
-                    errors.append({
-                        "line": line_num,
-                        "message": entry.get("message", entry.get("error", "unknown")),
-                        "timestamp": ts,
-                    })
+                if (
+                    entry_type == "error"
+                    or "error" in str(entry.get("message", "")).lower()
+                ):
+                    errors.append(
+                        {
+                            "line": line_num,
+                            "message": entry.get(
+                                "message", entry.get("error", "unknown")
+                            ),
+                            "timestamp": ts,
+                        }
+                    )
 
                 # Extract tool calls
                 if entry_type == "tool_use" or entry.get("tool_name"):
-                    tool_calls.append({
-                        "tool": entry.get("tool_name", entry.get("name", "unknown")),
-                        "timestamp": ts,
-                    })
+                    tool_calls.append(
+                        {
+                            "tool": entry.get(
+                                "tool_name", entry.get("name", "unknown")
+                            ),
+                            "timestamp": ts,
+                        }
+                    )
 
     except IOError as e:
         return {"error": f"Cannot read file: {e}"}
 
-    # Calculate cost
-    pricing = get_pricing(model)
-    cost = {
-        "input": tokens["input"] / 1_000_000 * pricing["input"],
-        "output": tokens["output"] / 1_000_000 * pricing["output"],
-        "cache_read": tokens["cache_read"] / 1_000_000 * pricing["cache_read"],
-        "cache_write_5m": tokens["cache_write_5m"] / 1_000_000 * pricing["cache_write_5m"],
-        "cache_write_1h": tokens["cache_write_1h"] / 1_000_000 * pricing["cache_write_1h"],
-    }
+    cost = compute_cost_breakdown(
+        model,
+        tokens["input"],
+        tokens["output"],
+        tokens["cache_write_5m"],
+        tokens["cache_write_1h"],
+        tokens["cache_read"],
+    )
     cost["total"] = sum(cost.values())
 
     # Calculate duration
@@ -184,7 +198,13 @@ def analyze_directory(dirpath: str, pattern: str = "*.jsonl") -> dict:
 
     results = []
     total_cost = 0
-    total_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0}
+    total_tokens = {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+    }
     total_errors = 0
 
     for f in files:
@@ -321,7 +341,9 @@ Examples:
     )
     parser.add_argument("path", help="Log file or directory to analyze")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--summary", action="store_true", help="Summary mode for directories")
+    parser.add_argument(
+        "--summary", action="store_true", help="Summary mode for directories"
+    )
     parser.add_argument("--errors", action="store_true", help="Show only errors")
     parser.add_argument("--cost", action="store_true", help="Show only cost breakdown")
 

@@ -22,7 +22,7 @@ Quick-start
             "search_type": "CITY",
         })
 
-CLI usage (from phantom/):
+CLI usage (from ninja/):
     python -m utils.mcp list                  # list all tools
     python -m utils.mcp search booking        # search tools by name
     python -m utils.mcp call <tool> '{...}'   # call a tool
@@ -38,16 +38,10 @@ import sys
 from typing import Any
 
 import httpx
+from clients.litellm_client import get_config
 from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client, StreamableHTTPTransport
-from mcp.types import (
-    CallToolResult,
-    InitializedNotification,
-    JSONRPCNotification,
-    Tool,
-)
-
-from utils.litellm_client import get_config
+from mcp.client.streamable_http import StreamableHTTPTransport, streamable_http_client
+from mcp.types import CallToolResult, InitializedNotification, JSONRPCNotification, Tool
 
 __all__ = [
     "MCPClient",
@@ -107,7 +101,9 @@ StreamableHTTPTransport._prepare_headers = _patched_prepare_headers  # type: ign
 _original_send_notification = ClientSession.send_notification
 
 
-async def _patched_send_notification(self: ClientSession, notification: Any, *args: Any, **kwargs: Any) -> None:
+async def _patched_send_notification(
+    self: ClientSession, notification: Any, *args: Any, **kwargs: Any
+) -> None:
     inner = getattr(notification, "root", notification)
     if isinstance(inner, InitializedNotification):
         logger.debug("Dropped InitializedNotification (gateway workaround)")
@@ -121,6 +117,7 @@ ClientSession.send_notification = _patched_send_notification  # type: ignore[ass
 # ---------------------------------------------------------------------------
 # MCPClient — with full connection-level retry
 # ---------------------------------------------------------------------------
+
 
 class MCPClient:
     """
@@ -213,13 +210,18 @@ class MCPClient:
                 last_err = e
                 logger.debug(
                     "%s attempt %d/%d failed: %s — reconnecting",
-                    operation, attempt, self._max_retries, e,
+                    operation,
+                    attempt,
+                    self._max_retries,
+                    e,
                 )
                 await self._disconnect()
                 self._tools_cache = None
                 if attempt < self._max_retries:
                     await asyncio.sleep(0.5 * attempt)
-        raise RuntimeError(f"{operation} failed after {self._max_retries} attempts: {last_err}")
+        raise RuntimeError(
+            f"{operation} failed after {self._max_retries} attempts: {last_err}"
+        )
 
     # -- context manager -----------------------------------------------------
 
@@ -276,7 +278,8 @@ class MCPClient:
         tools = await self.list_tools()
         q = query.lower()
         return [
-            t for t in tools
+            t
+            for t in tools
             if q in t.name.lower() or q in (t.description or "").lower()
         ]
 
@@ -296,7 +299,11 @@ class MCPClient:
 
     def format_tool(self, tool: Tool) -> str:
         """Format a single tool for display."""
-        schema = getattr(tool, "input_schema", None) or getattr(tool, "inputSchema", None) or {}
+        schema = (
+            getattr(tool, "input_schema", None)
+            or getattr(tool, "inputSchema", None)
+            or {}
+        )
         props = schema.get("properties", {})
         required = schema.get("required", [])
         visible = {k: v for k, v in props.items() if not v.get("hidden", False)}
@@ -339,13 +346,16 @@ class MCPClient:
 # Standalone helper functions
 # ---------------------------------------------------------------------------
 
+
 async def list_tools() -> list[Tool]:
     """One-shot: connect, list tools, disconnect."""
     async with MCPClient() as client:
         return await client.list_tools()
 
 
-async def call_tool(name: str, arguments: dict[str, Any] | None = None) -> CallToolResult:
+async def call_tool(
+    name: str, arguments: dict[str, Any] | None = None
+) -> CallToolResult:
     """One-shot: connect, call a tool, disconnect."""
     async with MCPClient() as client:
         return await client.call_tool(name, arguments)
@@ -367,13 +377,20 @@ async def group_tools() -> dict[str, list[Tool]]:
 # CLI interface
 # ---------------------------------------------------------------------------
 
+
 def _print_tool_brief(tool: Tool) -> None:
     """Print a one-line tool summary."""
     desc = (tool.description or "-")[:70].replace("\n", " ")
-    schema = getattr(tool, "input_schema", None) or getattr(tool, "inputSchema", None) or {}
+    schema = (
+        getattr(tool, "input_schema", None) or getattr(tool, "inputSchema", None) or {}
+    )
     props = schema.get("properties", {})
     visible = [k for k, v in props.items() if not v.get("hidden", False)]
-    param_str = f" ({', '.join(visible[:4])}{'...' if len(visible) > 4 else ''})" if visible else ""
+    param_str = (
+        f" ({', '.join(visible[:4])}{'...' if len(visible) > 4 else ''})"
+        if visible
+        else ""
+    )
     print(f"  • {tool.name}{param_str}")
     if desc != "-":
         print(f"    {desc}")
@@ -472,7 +489,9 @@ Commands:
         asyncio.run(_cli_info(sys.argv[2]))
     elif cmd == "call":
         if len(sys.argv) < 3:
-            print("Usage: python -m utils.mcp call <tool_name> ['{&quot;arg&quot;: &quot;val&quot;}']")
+            print(
+                "Usage: python -m utils.mcp call <tool_name> ['{&quot;arg&quot;: &quot;val&quot;}']"
+            )
             sys.exit(1)
         tool_name = sys.argv[2]
         args_json = sys.argv[3] if len(sys.argv) > 3 else "{}"

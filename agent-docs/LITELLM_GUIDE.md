@@ -23,9 +23,9 @@ Complete guide for agents to use AI models through the NinjaTech LiteLLM gateway
 
 The NinjaTech LiteLLM gateway provides a unified OpenAI-compatible API for accessing models from multiple providers (Anthropic, OpenAI, Google, NinjaTech). All requests go through a single base URL with a single API key.
 
-**Gateway URL**: `https://model-gateway.public.beta.myninja.ai`  
-**Protocol**: OpenAI-compatible REST API  
-**Auth**: Bearer token  
+**Gateway URL**: `https://model-gateway.public.beta.myninja.ai`
+**Protocol**: OpenAI-compatible REST API
+**Auth**: Bearer token
 
 ### Available Endpoints
 
@@ -75,7 +75,7 @@ export LITELLM_BASE_URL="https://different-gateway.example.com"
 ### Verifying Configuration
 
 ```python
-from utils.litellm_client import get_config
+from clients.litellm_client import get_config
 
 cfg = get_config()
 print(f"Gateway: {cfg['base_url']}")
@@ -87,8 +87,8 @@ print(f"Source:  {cfg['source']}")
 Or from the command line:
 
 ```bash
-cd /workspace/phantom
-python -m utils.litellm_client
+cd /workspace/ninja
+python -m clients.litellm_client
 ```
 
 ---
@@ -116,16 +116,16 @@ utils/
 from utils.chat import chat, chat_messages, chat_stream, chat_json
 
 # Images
-from utils.images import generate_image, generate_images
+from utils.images import generate_image, generate_images, edit_image
 
 # Video
-from utils.video import generate_video, submit_video, poll_video, download_video
+from utils.video import submit_video, check_video, download_video
 
 # Embeddings
 from utils.embeddings import embed, embed_batch, cosine_similarity
 
 # Config & models
-from utils.litellm_client import get_config, resolve_model, MODELS
+from clients.litellm_client import get_config, resolve_model, MODELS
 ```
 
 ---
@@ -211,25 +211,35 @@ print(data)
 
 ## Image Generation
 
-### Basic Usage
+Two workflows are supported:
+
+- **Generation** (text → image) via `/v1/images/generations`
+- **Editing / multi-reference composition** (text + images → image) via `/v1/images/edits`
+
+The default model is **`gpt-image`** (alias for `gpt-image-2`), OpenAI's current
+state-of-the-art image model. It supports up to **16 reference images**, text
+rendering, flexible sizes up to 2K, and reliable instruction-following.
+
+### Basic Generation
 
 ```python
 from utils.images import generate_image
 
-# Default model and size
+# Default model (gpt-image-2) and size (1024x1024)
 path = generate_image("A sunset over mountain peaks, oil painting style")
 print(f"Saved to: {path}")  # "generated_image.png"
 
 # With options
 path = generate_image(
     prompt="A futuristic city skyline at night, neon lights",
-    model="gemini-image",       # or "gpt-image"
+    model="gpt-image",          # or "gemini-image" or "gpt-image-1.5"
     size="1536x1024",           # landscape
+    quality="high",             # low | medium | high
     output="city_skyline.png",
 )
 ```
 
-### Multiple Images
+### Multiple Variants
 
 ```python
 from utils.images import generate_images
@@ -243,109 +253,203 @@ paths = generate_images(
 print(paths)  # ["logos/logo_1.png", "logos/logo_2.png", "logos/logo_3.png"]
 ```
 
-### Parameters
+### Editing with Reference Images ("group of files as context")
+
+Pass up to **16 reference images** to composite, style-transfer, or surgically edit
+existing visuals. This is the most powerful mode of gpt-image-2.
+
+```python
+from utils.images import edit_image
+
+# Two references → composite
+path = edit_image(
+    prompt=(
+        "Image 1 is a wooden chair. "
+        "Image 2 is an orange tabby cat. "
+        "Compose: the cat from Image 2 sits on the chair from Image 1. "
+        "Plain white background, studio lighting. "
+        "Preserve chair design and cat coloring exactly."
+    ),
+    references=["chair.png", "cat.png"],
+    output="cat_on_chair.png",
+)
+
+# Whole directory of references (picked up in alphabetical order)
+path = edit_image(
+    prompt=(
+        "Compose all referenced products into a clean catalog row on white. "
+        "Preserve each product's label and colors exactly."
+    ),
+    reference_dir="./product_refs/",
+    output="catalog.png",
+    quality="medium",
+)
+
+# Mix an explicit ordered list AND a directory
+path = edit_image(
+    prompt="Use Image 1 as the hero. Images 2–N are secondary props.",
+    references=["hero.png"],
+    reference_dir="./secondary/",
+    output="composition.png",
+)
+```
+
+### Prompting Fundamentals (gpt-image-2)
+
+Follow this structure for reliable, production-ready outputs:
+
+```
+[Subject + Adjectives] doing [Action] in [Scene/Context].
+[Composition/Camera]. [Lighting/Atmosphere]. [Style/Medium].
+[Exact Text]. [Aspect Ratio / Use Case].
+```
+
+**Specific techniques:**
+
+1. **Index references**: Say `"Image 1: …  Image 2: …"` in the prompt. Describe
+   each input and how they interact (`"apply Image 2's style to Image 1"`,
+   `"put the bird from Image 1 on the elephant in Image 2"`).
+2. **Literal text**: Put exact in-image copy in **quotes** or **ALL CAPS**, and
+   specify typography (`bold sans-serif, white on charcoal, centered`). Spell
+   tricky words letter-by-letter if needed.
+3. **Preserve list on edits**: Say what must **not** change — face, pose, brand
+   logo, background — and repeat that list on every iteration to prevent drift.
+4. **Quality vs latency**:
+   - `quality="low"` → fast drafts, large batches, ideation
+   - `quality="medium"` → default for most production use
+   - `quality="high"` → dense text, infographics, small-font charts, identity-sensitive edits
+5. **Photorealism**: Add `photorealistic`, mention a lens (`50mm`, `85mm`) and
+   lighting (`soft coastal daylight`, `golden hour`). Ask for real texture
+   (`pores`, `fabric wear`, `imperfections`) to avoid "AI polish".
+6. **Iterate small**: A clean base prompt + small follow-ups (`"make lighting
+   warmer"`, `"remove the extra tree"`) consistently beats one giant rewrite.
+
+### Common Use Cases
+
+| Task | Tip |
+|---|---|
+| Infographics / diagrams | `quality="high"`, size `1024x1536`, use labeled sections, explicit arrows |
+| Logos | Ask for "flat design, minimal strokes, strong silhouette, plain background, no watermark" |
+| Product on white | `quality="medium"`, specify "centered product, crisp silhouette, subtle contact shadow" |
+| Ads with text | Quote copy verbatim: `'Fresh and clean'`, request "bold sans-serif, high contrast, centered" |
+| Translation (localize existing ad) | `edit_image()` with the original as ref, prompt: "Translate text to Spanish. Do not change any other aspect." |
+| Character consistency across pages | Generate a "character anchor" image, then use it as a ref for every subsequent page |
+| Virtual try-on | Lock identity explicitly ("do not change face, skin tone, pose"). Only change clothes. |
+| Compositing from multiple sources | Index every reference (`Image 1/2/3…`) and state the spatial/stylistic relationship |
+
+### Parameters — `generate_image()` / `generate_images()`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `prompt` | str | required | Image description |
-| `model` | str | `"gpt-image"` | `"gpt-image"` or `"gemini-image"` |
-| `size` | str | `"1024x1024"` | `"1024x1024"`, `"1024x1536"`, `"1536x1024"` |
+| `model` | str | `"gpt-image"` | `"gpt-image"`, `"gpt-image-2"`, `"gpt-image-1.5"`, `"gemini-image"` |
+| `size` | str | `"1024x1024"` | `"1024x1024"`, `"1024x1536"`, `"1536x1024"`, `"2048x2048"`, `"auto"`, or any gpt-image-2-legal custom size |
+| `quality` | str | (gateway default) | `"low"` / `"medium"` / `"high"` |
 | `output` | str | `"generated_image.png"` | Output file path |
-| `n` | int | 1 | Number of images |
-| `timeout` | int | 120 | Request timeout (seconds) |
+| `n` | int | 1 | Number of variants to request |
+| `timeout` | int | 180 | Request timeout (seconds) |
 
-### Tips
+### Parameters — `edit_image()`
 
-- **`gemini-image` is more reliable** — Use it as the primary model
-- **`gpt-image` may have transient errors** — Retry or fall back to gemini
-- Images are downloaded from a URL returned by the gateway
-- Supported output formats: PNG (default based on extension)
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `prompt` | str | required | Instruction; index refs as `"Image 1", "Image 2", ...` |
+| `references` | list[str] | None | Ordered list of reference image paths |
+| `reference_dir` | str | None | Directory of references (alphabetical; merged after `references`) |
+| `model` | str | `"gpt-image"` | Same options as generation |
+| `size` | str | `"1024x1024"` | Same options as generation |
+| `output` | str | `"edited_image.png"` | Output file path |
+| `quality` | str | (gateway default) | `"low"` / `"medium"` / `"high"` |
+| `n` | int | 1 | Variants requested |
+| `timeout` | int | 240 | Request timeout (edits are slower than generations) |
+
+You must provide at least one of `references=[...]` or `reference_dir=...`. The
+**combined total cannot exceed 16 images** (gpt-image-2 limit).
+
+### CLI Usage
+
+Quick one-off runs without writing Python:
+
+```bash
+# Text → image
+python -m utils.images generate "A red apple on a white background"
+
+# With options
+python -m utils.images generate --size 1024x1536 --quality high \
+    --output infographic.png \
+    "An infographic of the water cycle with labeled arrows"
+
+# Edit / compose with multiple references (--ref repeated)
+python -m utils.images edit \
+    --ref chair.png --ref cat.png \
+    --output cat_on_chair.png \
+    "Image 1 is a chair. Image 2 is a cat. Put the cat on the chair."
+
+# Or reference a whole directory (alphabetical order)
+python -m utils.images edit \
+    --ref-dir ./product_refs/ \
+    --output catalog.png --size 1536x1024 \
+    "Compose all referenced products into a catalog row on pure white."
+
+# Mix both
+python -m utils.images edit \
+    --ref hero.png --ref-dir ./secondary/ \
+    "Image 1 is the hero. The rest are supporting props behind it."
+
+# Quick self-test
+python -m utils.images test
+```
+
+### Gateway Behavior Notes
+
+- Responses return a **URL** to a PNG. The utilities download it automatically.
+- Attaching many references (≥ 4–6) may cause the gateway to **auto-downgrade
+  `quality` to `"low"`** to stay within capacity. Harmless for drafts; for
+  production, use fewer refs and request `quality="medium"` or `"high"` explicitly.
+- `output_format` is accepted but always returns PNG today.
+- `background="transparent"` is accepted but doesn't reliably produce true alpha.
+- `input_fidelity` is **not supported** on gpt-image-2 (not needed — output is
+  high-fidelity by default).
+
+### Model Comparison
+
+| Model | When to Use |
+|---|---|
+| `gpt-image` (gpt-image-2) | **Default.** Text rendering, multi-ref compositing, flexible sizes, highest quality. |
+| `gpt-image-1.5` | Legacy migration only. Validated prompts that haven't been retested on gpt-image-2. |
+| `gemini-image` | Fallback / alternative. Fast (~16s). **Note**: ignores `size` param; returns 1408×768 JPG regardless. |
 
 ---
 
 ## Video Generation
 
-Video generation is **asynchronous** — it takes 60-120 seconds to complete.
-
-### All-in-One (Recommended)
-
-```python
-from utils.video import generate_video
-
-# Simple usage — handles submit, poll, and download
-path = generate_video("A cat playing with a ball of yarn in a sunny garden")
-print(f"Saved to: {path}")  # "generated_video.mp4"
-
-# With options
-path = generate_video(
-    prompt="Aerial drone shot of a coastline at golden hour, cinematic",
-    model="sora-pro",        # higher quality
-    size="1280x720",         # landscape
-    seconds=8,               # max duration
-    output="coastline.mp4",
-    max_wait=300,            # 5 min timeout
-)
-```
-
-### Step-by-Step (More Control)
+Videos come from **ByteDance Seedance**, through the gateway's video MCP server.
+A clip takes a few minutes, so it is three steps — submit, poll, download —
+which leaves you free to talk to the user in between.
 
 ```python
-from utils.video import submit_video, check_video_status, poll_video, download_video
+from utils.video import submit_video, check_video, download_video
 
-# Step 1: Submit
-video_id = submit_video(
-    "A robot walking through a forest",
-    model="sora",
-    size="1280x720",
-    seconds=8,
-)
-print(f"Submitted: {video_id}")
+video_id = submit_video("A cat playing with a ball of yarn", seconds=5)  # 4-12
 
-# Step 2: Check status (single check)
-info = check_video_status(video_id)
-print(f"Status: {info['status']}")  # "queued", "in_progress", "completed"
+# then, every 15 seconds until it is ready (free):
+info = check_video(video_id)
+# in_progress -> keep going;  completed -> "video_url";  failed -> "error"
 
-# Step 2b: Or poll until done (blocking)
-status = poll_video(video_id, interval=5, max_wait=300)
-print(f"Final status: {status}")  # "completed"
-
-# Step 3: Download
-path = download_video(video_id, output="robot_forest.mp4")
-print(f"Saved to: {path}")
+path = download_video(info["video_url"], "cat.mp4")
 ```
 
-### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `prompt` | str | required | Video description |
-| `model` | str | `"sora"` | `"sora"` or `"sora-pro"` |
-| `size` | str | `"1280x720"` | `"1280x720"` (landscape) or `"720x1280"` (portrait) |
-| `seconds` | int | 8 | Duration (max 8) |
-| `output` | str | `"generated_video.mp4"` | Output file path |
-| `max_wait` | int | 300 | Max poll time (seconds) |
-| `verbose` | bool | True | Print progress |
-
-### Video Workflow Diagram
-
-```
-submit_video()          poll_video()              download_video()
-     │                       │                          │
-     ▼                       ▼                          ▼
-POST /v1/videos  ──►  GET /v1/videos/{id}  ──►  GET /v1/videos/{id}/content
-     │                       │                          │
-     ▼                       ▼                          ▼
- video_id            queued → in_progress         MP4 file bytes
-                     → completed
-```
+Put the wait in a separate `sleep` command, not a Python loop.
 
 ### Tips
 
-- **`sora` is faster**, `sora-pro` is higher quality
-- Generation typically takes **60-120 seconds**
-- Max duration is **8 seconds**
-- The `custom-llm-provider: openai` header is required for status/content endpoints (handled automatically by the utilities)
-- Output format is always **MP4**
+- Always **1280x720 landscape MP4**. Resolution and orientation can't be changed.
+- The content filter is strict **and inconsistent** — an innocent prompt is
+  sometimes rejected. Rewording and trying once more usually works.
+- **Every submit costs money, including one the filter rejects.** Never loop;
+  tell the user what happened instead.
+- Keep the `video_id`. If your run is interrupted you can still collect the clip
+  later with `check_video(video_id)` — it is already paid for.
 
 ---
 
@@ -415,7 +519,7 @@ If you need to make custom API calls beyond what the utilities provide:
 ### Using the Client Helpers
 
 ```python
-from utils.litellm_client import get_headers, api_url, resolve_model
+from clients.litellm_client import get_headers, api_url, resolve_model
 import requests
 
 # Build URL and headers automatically
@@ -447,7 +551,7 @@ curl -s -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST "https://model-gateway.public.beta.myninja.ai/v1/chat/completions" \
   -d '{
-    "model": "claude-sonnet-4-5-20250929",
+    "model": "claude-opus-4-7",
     "messages": [{"role": "user", "content": "Hello"}],
     "max_tokens": 100
   }'
@@ -457,32 +561,13 @@ curl -s -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST "https://model-gateway.public.beta.myninja.ai/v1/images/generations" \
   -d '{
-    "model": "google/gemini/gemini-3-pro-image-preview",
+    "model": "alias/openai/gpt-image-2.0",
     "prompt": "A sunset",
     "size": "1024x1024"
   }'
 
-# Video generation (submit)
-curl -s -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -X POST "https://model-gateway.public.beta.myninja.ai/v1/videos" \
-  -d '{
-    "model": "openai/openai/sora-2",
-    "prompt": "A bouncing ball",
-    "seconds": "8",
-    "size": "1280x720"
-  }'
-
-# Video status (poll) — note the custom-llm-provider header
-curl -s -H "Authorization: Bearer $API_KEY" \
-  -H "custom-llm-provider: openai" \
-  "https://model-gateway.public.beta.myninja.ai/v1/videos/{VIDEO_ID}"
-
-# Video download
-curl -s -H "Authorization: Bearer $API_KEY" \
-  -H "custom-llm-provider: openai" \
-  "https://model-gateway.public.beta.myninja.ai/v1/videos/{VIDEO_ID}/content" \
-  --output video.mp4
+# Video generation — no curl equivalent; it is an MCP tool call.
+# Use utils.video (see the Video Generation section above).
 
 # Embeddings
 curl -s -H "Authorization: Bearer $API_KEY" \
@@ -530,20 +615,23 @@ def chat_with_retry(prompt, model="claude-sonnet", max_retries=3):
 answer = chat_with_retry("What is 2+2?")
 ```
 
-### Image Generation with Fallback
+### Image Generation with Retry
 
 ```python
 from utils.images import generate_image
 
-def generate_image_reliable(prompt, **kwargs):
-    """Try gpt-image first, fall back to gemini-image."""
-    try:
-        return generate_image(prompt, model="gpt-image", **kwargs)
-    except RuntimeError:
-        print("gpt-image failed, falling back to gemini-image...")
-        return generate_image(prompt, model="gemini-image", **kwargs)
+def generate_image_with_retry(prompt, retries=2, **kwargs):
+    """Generate with gpt-image-2, retrying on transient errors."""
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            return generate_image(prompt, model="gpt-image", **kwargs)
+        except RuntimeError as e:
+            last_err = e
+            print(f"Attempt {attempt} failed: {e}. Retrying...")
+    raise last_err
 
-path = generate_image_reliable("A beautiful landscape")
+path = generate_image_with_retry("A beautiful landscape")
 ```
 
 ---
@@ -561,9 +649,9 @@ def generate_product_description(product_name: str, features: list[str]) -> dict
     """Generate a marketing description for a product."""
     prompt = f"""Create a product description for "{product_name}" with these features:
     {', '.join(features)}
-    
+
     Return JSON with keys: tagline, description, bullet_points"""
-    
+
     return chat_json(prompt, model="claude-sonnet")
 
 # Usage
@@ -581,23 +669,23 @@ from utils.images import generate_image
 
 def create_illustrated_post(topic: str) -> dict:
     """Generate a blog post with a matching illustration."""
-    
+
     # Generate the text
     post = chat(
         f"Write a short blog post about: {topic}",
         model="claude-sonnet",
         system="Write engaging, concise blog posts. 2-3 paragraphs.",
     )
-    
+
     # Generate a matching image
     image_prompt = chat(
         f"Describe a single image that would illustrate this blog post: {post[:500]}",
         model="claude-haiku",
         system="Describe an image in one detailed sentence. No text in the image.",
     )
-    
-    image_path = generate_image(image_prompt, model="gemini-image")
-    
+
+    image_path = generate_image(image_prompt, model="gpt-image")
+
     return {"text": post, "image": image_path, "image_prompt": image_prompt}
 
 result = create_illustrated_post("The future of AI")
@@ -614,7 +702,7 @@ class SemanticSearch:
     def __init__(self, documents: list[str]):
         self.documents = documents
         self.vectors = embed_batch(documents)
-    
+
     def search(self, query: str, top_k: int = 3) -> list[tuple[str, float]]:
         """Find the most relevant documents for a query."""
         query_vec = embed(query)
@@ -646,21 +734,21 @@ If the gateway adds a new endpoint, here's how to create a utility for it:
 """Template for a new utility module."""
 
 import requests
-from utils.litellm_client import get_headers, api_url, resolve_model
+from clients.litellm_client import get_headers, api_url, resolve_model
 
 def my_new_function(param1: str, model: str = "default-model") -> dict:
     """
     Description of what this function does.
-    
+
     Args:
         param1: Description.
         model:  Model alias or full ID.
-    
+
     Returns:
         Description of return value.
     """
     model_id = resolve_model(model)
-    
+
     r = requests.post(
         api_url("/v1/new-endpoint"),
         headers=get_headers(),
@@ -670,11 +758,11 @@ def my_new_function(param1: str, model: str = "default-model") -> dict:
         },
         timeout=60,
     )
-    
+
     if r.status_code != 200:
         error = r.json().get("error", {}).get("message", r.text[:300])
         raise RuntimeError(f"Request failed ({r.status_code}): {error}")
-    
+
     return r.json()
 ```
 
@@ -691,10 +779,10 @@ The key building blocks from `litellm_client.py` are:
 Each utility module has a built-in self-test:
 
 ```bash
-cd /workspace/phantom
+cd /workspace/ninja
 
 # Test configuration
-python -m utils.litellm_client
+python -m clients.litellm_client
 
 # Test chat (fast, ~5s)
 python -m utils.chat
@@ -704,9 +792,6 @@ python -m utils.embeddings
 
 # Test images (~30s, uses API credits)
 python -m utils.images
-
-# Test video (~120s, uses API credits)
-python -m utils.video
 ```
 
 ---
@@ -723,7 +808,7 @@ from utils.chat import chat; print(chat("Hello!"))
 from utils.images import generate_image; generate_image("A sunset")
 
 # Video
-from utils.video import generate_video; generate_video("A bouncing ball")
+from utils.video import submit_video; print(submit_video("A bouncing ball"))
 
 # Embedding
 from utils.embeddings import embed; print(len(embed("Hello")))
@@ -737,7 +822,7 @@ print(cosine_similarity(embed("cat"), embed("dog")))
 
 ```
 CHAT:   claude-opus | claude-sonnet | claude-haiku | gpt-5 | gemini-pro | ninja-fast
-IMAGE:  gpt-image | gemini-image
-VIDEO:  sora | sora-pro
+IMAGE:  gpt-image (default, = gpt-image-2) | gemini-image (alternative)
+VIDEO:  (no alias — utils.video: submit, poll, download)
 EMBED:  embed-small | embed-large
 ```

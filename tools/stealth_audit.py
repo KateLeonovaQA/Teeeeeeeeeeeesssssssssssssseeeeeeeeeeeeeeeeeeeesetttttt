@@ -18,9 +18,9 @@ Python API:
     print(result["overall"])  # "pass" or "fail"
 """
 
+import asyncio
 import json
 import sys
-import asyncio
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -140,7 +140,7 @@ STEALTH_CHECKS_JS = """
 async def _run_audit_async(site: str = None, quick: bool = False) -> dict:
     """Run the stealth audit asynchronously."""
     try:
-        from browser_interface import BrowserInterface
+        from browser.browser_interface import BrowserInterface
     except ImportError:
         return {"error": "Cannot import BrowserInterface. Run from project root."}
 
@@ -165,17 +165,25 @@ async def _run_audit_async(site: str = None, quick: bool = False) -> dict:
             if site == "sannysoft" or site is None:
                 sites.append(("bot.sannysoft.com", "https://bot.sannysoft.com"))
             if site == "browserleaks" or site is None:
-                sites.append(("browserleaks.com", "https://browserleaks.com/javascript"))
+                sites.append(
+                    ("browserleaks.com", "https://browserleaks.com/javascript")
+                )
 
             for site_name, url in sites:
                 try:
                     browser.go(url)
                     browser.page.wait_for_load_state("networkidle", timeout=10000)
                     import time
+
                     time.sleep(2)
 
                     # Take screenshot for evidence
-                    screenshot_path = REPO_ROOT / "phantom" / "screenshots" / f"stealth_audit_{site_name}.png"
+                    screenshot_path = (
+                        REPO_ROOT
+                        / "ninja"
+                        / "screenshots"
+                        / f"stealth_audit_{site_name}.png"
+                    )
                     browser.screenshot(str(screenshot_path))
 
                     # Extract page text for analysis
@@ -191,18 +199,21 @@ async def _run_audit_async(site: str = None, quick: bool = False) -> dict:
                     # Parse sannysoft results
                     if "sannysoft" in site_name:
                         site_result["details"] = {
-                            "webdriver_hidden": "webdriver" not in text.lower() or "false" in text.lower(),
+                            "webdriver_hidden": "webdriver" not in text.lower()
+                            or "false" in text.lower(),
                         }
 
                     result["site_tests"].append(site_result)
 
                 except Exception as e:
-                    result["site_tests"].append({
-                        "site": site_name,
-                        "url": url,
-                        "loaded": False,
-                        "error": str(e),
-                    })
+                    result["site_tests"].append(
+                        {
+                            "site": site_name,
+                            "url": url,
+                            "loaded": False,
+                            "error": str(e),
+                        }
+                    )
 
     except Exception as e:
         result["error"] = f"Audit failed: {e}"
@@ -269,7 +280,9 @@ def print_audit(result: dict):
     if site_tests:
         print(f"\n  🌐 Detection Site Tests:")
         for st in site_tests:
-            loaded = "✅ loaded" if st.get("loaded") else f"❌ {st.get('error', 'failed')}"
+            loaded = (
+                "✅ loaded" if st.get("loaded") else f"❌ {st.get('error', 'failed')}"
+            )
             print(f"    {st['site']:25s} {loaded}")
             if st.get("screenshot"):
                 print(f"      📸 {st['screenshot']}")
@@ -293,7 +306,11 @@ Examples:
     )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--quick", action="store_true", help="Quick JS-only check")
-    parser.add_argument("--site", choices=["sannysoft", "browserleaks"], help="Test specific detection site")
+    parser.add_argument(
+        "--site",
+        choices=["sannysoft", "browserleaks"],
+        help="Test specific detection site",
+    )
 
     args = parser.parse_args()
     result = run_stealth_audit(site=args.site, quick=args.quick)
